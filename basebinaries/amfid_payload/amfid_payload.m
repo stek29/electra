@@ -201,7 +201,7 @@ int open_img(img_info_t* info) {
     size_t fsize = s.st_size;
 
     // overflow me!
-    if (sizeof(struct mach_header_64) + info->file_off > fsize){
+    if (sizeof(struct mach_header) + info->file_off > fsize){
         _LOG_ERROR("File too small to have mach header at file_off (off + sizeof(mh) > fsize)");
         ret = 3; goto out;
     }
@@ -232,23 +232,33 @@ const uint8_t *find_code_signature(img_info_t* info, uint32_t* cs_size) {
         return NULL;
     }
 
-    const struct mach_header_64* mh = (const struct mach_header_64*) info->addr;
+    // mach_header_64 is mach_header + reserved for padding
+    const struct mach_header* mh = (const struct mach_header*) info->addr;
 
-    if (mh->magic != MH_MAGIC_64) {
-        _LOG_ERROR("Invalid magic %08x", mh->magic);
-        return NULL;
+    uint32_t sizeofmh = 0;
+
+    switch (mh->magic) {
+        case MH_MAGIC_64:
+            sizeofmh = sizeof(struct mach_header_64);
+            break;
+        case MH_MAGIC:
+            sizeofmh = sizeof(struct mach_header);
+            break;
+        default:
+            _LOG_ERROR("Invalid magic %08x", mh->magic);
+            return NULL;
     }
 
     if (mh->sizeofcmds < mh->ncmds * sizeof(struct load_command)) {
         _LOG_ERROR("Corrupted macho (sizeofcmds < ncmds * sizeof(lc))");
         return NULL;
     }
-    if (mh->sizeofcmds + sizeof(struct mach_header_64) > info->size) {
+    if (mh->sizeofcmds + sizeofmh > info->size) {
         _LOG_ERROR("Corrupted macho (sizeofcmds + sizeof(mh) > size)");
         return NULL;     
     }
 
-    const struct load_command *cmd = (const struct load_command *) &mh[1];
+    const struct load_command *cmd = (const struct load_command *) ((uintptr_t) info->addr + sizeofmh);
     for (int i = 0; i != mh->ncmds; ++i) {
         if (cmd->cmd == LC_CODE_SIGNATURE) {
             const struct linkedit_data_command* cscmd = (const struct linkedit_data_command*) cmd;
